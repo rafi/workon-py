@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+#
+# workon-py - work on virtualenvs via subshell
+# http://github.com/rafi/workon-py
+#
+# Copyright (C) 2015 Rafael Bodill <justrafi at gmail>
+# Distributed under the GNU General Public License, version 2.0.
+set -eu
+
+_workon_usage() {
+	local __version=0.1.7
+	echo "usage: $(basename "$0") [arguments] <virtualenv>"
+	echo "version: ${__version}"
+	echo
+	echo 'arguments:'
+	echo "  -c, --create           create and activate a new virtualenv"
+	echo "  -h, --help             show this help message and exit"
+}
+
+# Create a new virtualenv in specific path, using 'virtualenv' from
+# WORKON_VIRTUALENV environment variable or selected virtualenv, if found many.
+_workon_create() {
+	if [ -d "$VIRTUAL_ENV" ]; then
+		echo "It appears this virtualenv already exists ($VIRTUAL_ENV), aborting."
+		exit 2
+	fi
+	local virtualenv_cmd="${WORKON_VIRTUALENV:=}"
+	if [ "$virtualenv_cmd" = "" ]; then
+		local paths=(${PATH//:/ })
+		local IFS=$'\n'
+		local i=($(find "${paths[@]}" -maxdepth 1 -name "virtualenv*" 2>/dev/null))
+		if [ ${#i[@]} -eq 0 ]; then
+			echo 'Cannot find virtualenv, aborting.'
+			exit 3
+		elif [ ${#i[@]} -eq 1 ]; then
+			virtualenv_cmd="${i[0]}"
+		else
+			PS3='Select virtualenv program to use: '
+			select virtualenv_cmd in "${i[@]}"; do
+				[ -n "$virtualenv_cmd" ] && break;
+			done
+		fi
+	fi
+	"${virtualenv_cmd}" "${__workon_home}${__venv}"
+	_workon_activate "${1}"
+}
+
+# Execute a subshell with virtualenv variable prepended to PATH
+_workon_activate() {
+	if [ ! -d "$VIRTUAL_ENV" ]; then
+		echo " :: Virtual environment '$1' doesn't exist at $VIRTUAL_ENV"
+		exit 2
+	fi
+	echo " :: Activating \`$VIRTUAL_ENV\`"
+	echo '    To deactivate, exit the shell (using "exit" or Ctrl-D).'
+
+	export VIRTUAL_ENV
+	export PATH="$VIRTUAL_ENV/bin:$PATH"
+	unset PYTHONHOME
+	exec "${SHELL}"
+}
+
+_workon () {
+	local envs="${WORKON_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/python/envs}"
+	local __workon_home="${envs%/}/" __venv='' __create=0
+
+	for (( i=1; i<=$#; i++ )); do
+		case "${!i}" in
+			-c|--create)  __create=1 ;;
+			-h|--help)    _workon_usage; exit ;;
+			-*)           echo "Warning, unrecognized option ${!i}" ;;
+			*)            __venv="${!i}" ;;
+		esac
+	done
+
+	if [ ! -d "$__workon_home" ]; then
+		echo " :: Virtualenvs directory doesn't exist, creating '$__workon_home'"
+		mkdir -p "$__workon_home"
+	fi
+	if [ -n "${VIRTUAL_ENV+set}" ]; then
+		echo ' :: Already inside a virtualenv, exit first'
+		exit 1
+	fi
+
+	if [ -z "${__venv}" ]; then
+		# List all virtualenvs if one is not specified
+		find "$__workon_home" ! -path "$__workon_home" \
+			-type d -maxdepth 1 -exec basename "{}" \;
+	else
+		# Prepare the virtualenv's path and call a functionn matching command
+		[ "$__venv" = "." ] && __venv="$(basename "$PWD")"
+		local VIRTUAL_ENV="${__workon_home}${__venv}"
+		if [ "$__create" = "1" ]; then
+			_workon_create "${__venv}"
+		fi
+		_workon_activate "${__venv}"
+	fi
+	exit $?
+}
+_workon "$@"
