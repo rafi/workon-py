@@ -1,7 +1,7 @@
 # workon-py - work on virtualenvs via subshell
 # http://github.com/rafi/workon-py
 #
-# Copyright (C) 2015 Rafael Bodill <justrafi at gmail>
+# Copyright (C) 2015-2016 Rafael Bodill <justrafi at gmail>
 # Distributed under the GNU General Public License, version 2.0.
 
 cdvirtualenv () {
