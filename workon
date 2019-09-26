@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# workon-py - work on virtualenvs via subshell
+# workon-py - work on virtualenvs via sub-shell
 # http://github.com/rafi/workon-py
 #
 # Copyright (C) 2015-2019 Rafael Bodill <justrafi at gmail>
 # Distributed under the GNU General Public License, version 2.0.
 set -eu
 
+# Help screen
 _workon_usage() {
 	local __version=0.2.0
 	echo "usage: $(basename "$0") [arguments] <virtualenv>"
@@ -14,6 +15,7 @@ _workon_usage() {
 	echo
 	echo 'arguments:'
 	echo "  -c, --create           create and activate a new virtualenv"
+	echo "      --no-install       when creating, don't install requirements"
 	echo "  -d, --delete           Delete virtualenv"
 	echo "  -h, --help             show this help message and exit"
 	echo
@@ -23,8 +25,9 @@ _workon_usage() {
 	echo "                         Leave empty for interactive selection."
 }
 
-# Create a new virtualenv in specific path, using 'virtualenv' from
+# Creates a new virtualenv in specific path, using 'virtualenv' from
 # WORKON_VIRTUALENV environment variable or selected virtualenv, if found many.
+# Also, supports the simple 'python3 -m venv'
 _workon_create() {
 	if [ -d "$VIRTUAL_ENV" ]; then
 		echo "It appears this virtualenv already exists ($VIRTUAL_ENV), aborting."
@@ -33,119 +36,173 @@ _workon_create() {
 
 	local virtualenv_cmd="${WORKON_VIRTUALENV:=}"
 	if [ "$virtualenv_cmd" = "" ]; then
-		local paths=( ${PATH//:/ } )
+		# Push all $PATH directories into an array
+		declare -a paths=()
+		while IFS=  read -r -d ':'; do paths+=("$REPLY"); done < <(echo "${PATH}")
+
+		# Push available virtualenv executables and hard-coded `-m venv` option
 		declare -a cmds=()
-		cmds+=("python3 -m venv")
-		while IFS=  read -r -d $'\0'; do
-				cmds+=("$REPLY")
-		done < <(\
+		if hash python3 2>/dev/null; then
+			cmds+=("python3 -m venv")
+		fi
+		while IFS=  read -r -d $'\0'; do cmds+=("$REPLY"); done < <(\
 			find "${paths[@]}" -maxdepth 1 -name "virtualenv*" -print0 2>/dev/null)
 
 		if [ ${#cmds[@]} -eq 0 ]; then
 			echo 'Cannot find any virtualenv commands, aborting.'
 			exit 3
 		elif [ ${#cmds[@]} -eq 1 ]; then
+			# Found only one executable, use it without asking
 			virtualenv_cmd="${cmds[0]}"
 		else
-			PS3='Select virtualenv program to use: '
+			PS3=' :: Select virtualenv program to use: '
 			select virtualenv_cmd in "${cmds[@]}"; do
 				[ -n "$virtualenv_cmd" ] && break;
 			done
 		fi
 	fi
 
+	# Use python3 venv module or a different command for creation
 	if [ "${virtualenv_cmd}" = "python3 -m venv" ]; then
 		python3 -m venv "${VIRTUAL_ENV}"
 	else
 		"${virtualenv_cmd}" "${VIRTUAL_ENV}"
 	fi
 
-	if [ "${__install}" = "1" ]; then
+	# Install requirements.txt with pip if not specified otherwise
+	if [ -f requirements.txt ] && [ "${__install}" = "1" ]; then
 		echo
 		"${VIRTUAL_ENV}"/bin/pip install -r requirements.txt
 	fi
 }
 
-# Delete virtualenv
+# Deletes a virtualenv
 _workon_delete() {
-	if [ ! -d "$VIRTUAL_ENV" ]; then
-		echo " :: Virtual environment '$1' doesn't exist at $VIRTUAL_ENV"
-		exit 2
-	fi
 	rm -rf "$VIRTUAL_ENV"
 	echo " :: Virtual environment '$1' deleted $VIRTUAL_ENV"
 }
 
-# Execute a subshell with virtualenv variable prepended to PATH
+# Executes a sub-shell with virtualenv variable prepended to PATH
 _workon_activate() {
-	if [ ! -d "$VIRTUAL_ENV" ]; then
-		echo " :: Virtual environment '$1' doesn't exist at $VIRTUAL_ENV"
-		exit 2
-	fi
 	echo " :: Activating \`$VIRTUAL_ENV\`"
 	echo '    To deactivate, exit the shell (using "exit" or Ctrl-D).'
 
+	# This is what it all boils down to
 	export VIRTUAL_ENV
 	export PATH="$VIRTUAL_ENV/bin:$PATH"
 	unset PYTHONHOME
 	exec "${SHELL}"
 }
 
+# List all virtual-environments, or interactively activate
+# selected environment if fzf or fzy are available.
 _workon_list() {
+	local selectors=(fzf fzy)
+	local only_list="$1"
+	local name='' selector=''
+
+	for exe in "${selectors[@]}"; do
+		hash "${exe}" 2>/dev/null && selector="${exe}" && break
+	done
+
+	if [ -n "${selector}" ] && [ ! "$only_list" = "1" ]; then
+		name="$(__workon_get_all | ${selector})"
+		VIRTUAL_ENV="${__workon_home}${name}"
+		_workon_activate "${name}"
+	else
+		__workon_get_all
+	fi
+}
+
+# Return list of virtual-environments names
+__workon_get_all() {
 	find "$__workon_home" ! -path "$__workon_home" \
 		-type d -maxdepth 1 -exec basename "{}" \;
 }
 
-_workon_get_name() {
+# Returns a path's base name with a crc32 (if available) of the entire path
+__workon_get_path_name() {
 	local cwd="$1" name='' hash=''
 	name="$(basename "${cwd}")"
 
 	if hash crc32 2>/dev/null; then
-		hash=$(crc32 <(echo "${cwd}"))
+		hash="$(crc32 <(echo "${cwd}"))"
 		name="${name}-${hash}"
 	fi
 	echo "${name}"
 }
 
+# Program entry-point
 _workon () {
 	local envs="${WORKON_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/python/envs}"
-	local __workon_home="${envs%/}/" __venv=''
-	local __delete=0 __create=0 __install=1
+	local __workon_home="${envs%/}/" __venv='' __positional=()
+	local __create=0 __delete=0 __upgrade=0 __list=0 __install=1
 
-	for (( i=1; i<=$#; i++ )); do
-		case "${!i}" in
-			-c|--create)  __create=1 ;;
-			-d|--delete)  __delete=1 ;;
-			--no-install) __install=0 ;;
+	# Parse command-line arguments
+	while [[ $# -gt 0 ]]; do
+		case "${1}" in
+			-c|--create)  __create=1; shift ;;
+			-d|--delete)  __delete=1; shift ;;
+			-u|--upgrade) __upgrade=1; shift ;;
+			-l|--list)    __list=1; shift ;;
+			--no-install) __install=0; shift ;;
 			-h|--help)    _workon_usage; exit ;;
-			-*)           echo "Warning, unrecognized option ${!i}" ;;
-			*)            __venv="${!i}" ;;
+			-*) echo "Warning, unrecognized option ${1}"; shift ;;
+			*) __positional+=("$1"); shift ;;
 		esac
 	done
+	set -- "${__positional[@]}"
 
+	# Abort if we're already activated
 	if [ -n "${VIRTUAL_ENV+set}" ]; then
 		echo ' :: Already inside a virtualenv, exit first'
 		exit 1
 	fi
+
+	# Create the root path for all virtual-environments
 	if [ ! -d "$__workon_home" ]; then
 		echo " :: Virtualenvs directory doesn't exist, creating '$__workon_home'"
 		mkdir -p "$__workon_home"
 	fi
 
-	if [ -z "${__venv}" ]; then
-		# List all virtualenvs if one is not specified
-		_workon_list
+	if [ -z "${1+set}" ]; then
+		# List all virtual-environments if one is not specified
+		_workon_list "${__list}"
 	else
-		# Prepare the virtualenv's path and call a function matching command
-		[ "$__venv" = "." ] && __venv="$(_workon_get_name "$PWD")"
+		# Define the virtualenv in question
+		__venv="${1}"
+		shift
+		if [ "$__venv" = "." ]; then
+			__venv="$(__workon_get_path_name "$PWD")"
+		fi
+
+		# Concat whole virtual-environment path
 		local VIRTUAL_ENV="${__workon_home}${__venv}"
-		if [ "$__delete" = "1" ]; then
-			_workon_delete "${__venv}"
-		else
-			[ "$__create" = "1" ] && _workon_create "${__venv}"
+
+		# Create and activate / delete / activate
+		if [ "$__create" = "1" ]; then
+			if [ -d "$VIRTUAL_ENV" ] && [ "$__upgrade" = "0" ]; then
+				echo " :: Virtual environment '$1' already exist at $VIRTUAL_ENV"
+				echo '    You can force an upgrade with "-u".'
+				exit 2
+			fi
+			_workon_create "${__venv}"
 			_workon_activate "${__venv}"
+		else
+			if [ ! -d "$VIRTUAL_ENV" ]; then
+				echo " :: Virtual environment '$1' doesn't exist at $VIRTUAL_ENV"
+				exit 2
+			fi
+			if [ "$__delete" = "1" ]; then
+				_workon_delete "${__venv}"
+			else
+				_workon_activate "${__venv}"
+			fi
 		fi
 	fi
 	exit $?
 }
+
 _workon "$@"
+
+# vim: set ts=2 sw=2 tw=80 noet :
