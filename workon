@@ -9,7 +9,7 @@ set -eu
 
 # Help screen
 _workon_usage() {
-	local __version=1.0.0
+	local __version=1.2.0
 	echo "usage: $(basename "$0") [arguments] <virtualenv>"
 	echo "version: ${__version}"
 	echo
@@ -17,6 +17,7 @@ _workon_usage() {
 	echo '  -c, --create           create and activate a new virtualenv'
 	echo "      --no-install       when creating, don't install requirements"
 	echo '  -d, --delete           Delete virtualenv'
+	echo '  -r, --run <cmd>        Run a binary from virtualenv'
 	echo '  -h, --help             show this help message and exit'
 	echo
 	echo 'environment variables:'
@@ -33,14 +34,14 @@ _workon_create() {
 	local venv="${__workon_home}${1}"
 	local is_upgrade="${2:-0}"
 
-	if [ -d "$venv" ] && [ "$is_upgrade" = "0" ] ; then
-		echo "Virtualenv '${1}' already exist at $venv" >&2
+	if [ -d "${venv}" ] && [ "${is_upgrade}" = "0" ] ; then
+		echo "Virtualenv '${1}' already exist at ${venv}" >&2
 		echo 'You can force an upgrade with "-u".' >&2
 		exit 2
 	fi
 
 	local virtualenv_cmd="${WORKON_VIRTUALENV:=}"
-	if [ "$virtualenv_cmd" = "" ]; then
+	if [ "${virtualenv_cmd}" = "" ]; then
 		# Push all $PATH directories into an array
 		declare -a paths=()
 		while IFS=  read -r -d ':'; do paths+=("$REPLY"); done < <(echo "${PATH}")
@@ -62,7 +63,7 @@ _workon_create() {
 		else
 			PS3=' :: Select virtualenv program to use: '
 			select virtualenv_cmd in "${cmds[@]}"; do
-				[ -n "$virtualenv_cmd" ] && break;
+				[ -n "${virtualenv_cmd}" ] && break;
 			done
 		fi
 	fi
@@ -91,24 +92,38 @@ _workon_requirements() {
 	done
 }
 
+# Run a binary from a virtualenv
+_workon_run() {
+	if [ $# -lt 2 ]; then
+		echo 'Please specify a command to run inside the virtualenv.' >&2
+		exit 3
+	fi
+
+	local venv="${__workon_home}${1}"
+	local bin="${2}"
+	shift 2
+
+	exec "${venv}"/bin/"${bin}" "$@"
+}
+
 # Deletes a virtualenv
 _workon_delete() {
 	[ -z "${1+set}" ] && exit 3
 	local venv="${__workon_home}${1}"
 
-	if [ "$venv" = "${__workon_home}" ]; then
+	if [ "${venv}" = "${__workon_home}" ]; then
 		echo "Invalid virtualenv name, aborting." >&2
 		exit 2
-	elif [ ! -d "$venv" ]; then
-		echo "Virtualenv '$1' doesn't exist at $venv" >&2
+	elif [ ! -d "${venv}" ]; then
+		echo "Virtualenv '$1' doesn't exist at ${venv}" >&2
 		exit 2
-	elif [ -n "${VIRTUAL_ENV+set}" ] && [ "${VIRTUAL_ENV}" = "$venv" ]; then
+	elif [ -n "${VIRTUAL_ENV+set}" ] && [ "${VIRTUAL_ENV}" = "${venv}" ]; then
 		echo "You are currently activated within '${1}', deactivate first." >&2
 		exit 2
 	fi
 
 	rm -rf "$venv"
-	echo "Virtual environment '${1}' deleted $venv"
+	echo "Virtual environment '${1}' deleted ${venv}"
 }
 
 # Executes a sub-shell with virtualenv variable prepended to PATH
@@ -122,17 +137,17 @@ _workon_activate() {
 	[ -z "${1+set}" ] && exit 3
 	local VIRTUAL_ENV="${__workon_home}${1}"
 
-	if [ ! -d "$VIRTUAL_ENV" ]; then
-		echo "Virtualenv '$1' doesn't exist at $VIRTUAL_ENV" >&2
+	if [ ! -d "${VIRTUAL_ENV}" ]; then
+		echo "Virtualenv '$1' doesn't exist at ${VIRTUAL_ENV}" >&2
 		exit 2
 	fi
 
-	echo " :: Activating \`$VIRTUAL_ENV\`"
+	echo " :: Activating \`${VIRTUAL_ENV}\`"
 	echo '    To deactivate, exit the shell (using "exit" or Ctrl-D).'
 
 	# This is what it all boils down to
 	export VIRTUAL_ENV
-	export PATH="$VIRTUAL_ENV/bin:$PATH"
+	export PATH="${VIRTUAL_ENV}/bin:${PATH}"
 	unset PYTHONHOME
 	exec "${SHELL}"
 }
@@ -148,17 +163,17 @@ _workon_select() {
 	done
 
 	if [ -n "${selector}" ]; then
-		name="$(_workon_list | "${selector}")"
-		echo "$name"
+		_workon_list | "${selector}"
 	else
-		echo "Unable to find one of: ${selectors[*]}" >&2
+		echo "Unable to find one of these dependencies: ${selectors[*]}" >&2
+		echo "Try installing https://github.com/junegunn/fzf"
 		exit 4
 	fi
 }
 
 # Return list of virtual-environments names
 _workon_list() {
-	find "$__workon_home" ! -path "$__workon_home" \
+	find "${__workon_home}" ! -path "${__workon_home}" \
 		-type d -maxdepth 1 -exec basename "{}" \;
 }
 
@@ -167,6 +182,7 @@ __workon_resolve() {
 	local name="${1:-}"
 
 	if [ -z "${name}" ]; then
+		echo "Please specify a virtualenv for this command." >&2
 		exit 2
 	elif [ "${name}" = "." ]; then
 		__workon_get_path_name "$PWD"
@@ -185,7 +201,7 @@ __workon_resolve() {
 # Returns a path's base name with a crc32 (if available) of the entire path
 __workon_get_path_name() {
 	[ -z "${1+set}" ] && exit 3
-	local cwd="$1" name='' hash=''
+	local cwd="${1}" name='' hash=''
 	name="$(basename "${cwd}")"
 
 	if hash crc32 2>/dev/null; then
@@ -199,7 +215,7 @@ __workon_get_path_name() {
 _workon () {
 	local data="${WORKON_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/python/envs}"
 	local __workon_home="${data%/}/" env_wanted='' env_name='' positional=()
-	local is_create=0 is_delete=0 is_upgrade=0 is_list=0 is_install=1
+	local is_create=0 is_run=0 is_delete=0 is_upgrade=0 is_list=0 is_install=1
 
 	# Parse command-line arguments
 	while [[ $# -gt 0 ]]; do
@@ -209,18 +225,19 @@ _workon () {
 			-u|--upgrade) is_upgrade=1; shift ;;
 			-l|--list)    is_list=1; shift ;;
 			--no-install) is_install=0; shift ;;
+			-r|--run)     is_run=1; shift ;;
 			-h|--help)    _workon_usage; exit ;;
 			-*) echo "Warning, unrecognized option ${1}" >&2; shift ;;
-			*) positional+=("$1"); shift ;;
+			*) positional+=("${1}"); shift ;;
 		esac
 	done
 	set -- "${positional[@]}"
 
 	# Create the root path for all virtual-environments
-	if [ ! -d "$__workon_home" ]; then
+	if [ ! -d "${__workon_home}" ]; then
 		echo " :: Virtualenvs directory doesn't exist," >&2
-		echo "    Creating '$__workon_home'..." >&2
-		mkdir -p "$__workon_home"
+		echo "    Creating '${__workon_home}'..." >&2
+		mkdir -p "${__workon_home}"
 	fi
 
 	if [ "${is_list}" = "1" ]; then
@@ -229,21 +246,27 @@ _workon () {
 	else
 		# Define the virtualenv in question
 		if [ -z "${1+set}" ]; then
+			if [ "${is_create}" = "1" ]; then
+				echo 'You must specify a name or path to create.' >&2
+				exit 2
+			fi
 			env_wanted="$(_workon_select)"
 			[ -z "$env_wanted" ] && exit $?
 		else
 			env_wanted="${1}"
 			shift
 		fi
-		env_name="$(__workon_resolve "$env_wanted")"
+		env_name="$(__workon_resolve "${env_wanted}")"
 
 		# Create and activate / delete / activate
-		if [ "$is_create" = "1" ]; then
-			_workon_create "${env_name}" "$is_upgrade"
-			[ "$is_install" = "1" ] && _workon_requirements "${env_name}"
+		if [ "${is_create}" = "1" ]; then
+			_workon_create "${env_name}" "${is_upgrade}"
+			[ "${is_install}" = "1" ] && _workon_requirements "${env_name}"
 			_workon_activate "${env_name}"
 		else
-			if [ "$is_delete" = "1" ]; then
+			if [ "${is_run}" = "1" ]; then
+				_workon_run "${env_name}" "$@"
+			elif [ "${is_delete}" = "1" ]; then
 				_workon_delete "${env_name}"
 			else
 				_workon_activate "${env_name}"
