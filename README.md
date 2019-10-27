@@ -1,12 +1,13 @@
 # workon-py
 
-Work and create python virtualenvs in a central directory, via subshell.
+> Simple pipenv bash alternative, virtual-environment management helper.
 
-## Dependencies
-
-- python3 or virtualenv
+Work and create python virtualenvs in a central
+directory, use sub-shell for activation and run arbitrary commands in envs.
 
 ## Install
+
+Before, make sure you're using Python 3 and/or have `virtualenv` installed.
 
 Change directory to installation location, for example `~/.local/bin`:
 
@@ -14,6 +15,8 @@ Change directory to installation location, for example `~/.local/bin`:
 $ cd ~/.local/bin
 $ curl -L https://github.com/rafi/workon-py/tarball/master | tar zx --strip-components=1
 ```
+
+See [shell completion](#shell-completion) for helpful shell completions.
 
 ## Usage
 
@@ -42,20 +45,43 @@ virtualenv to use, if more than one version is found:
 
 ```bash
 $ workon -c foobar
+
 1) python3 -m venv                3) /usr/local/bin/virtualenv
-1) /usr/local/bin/virtualenv-3.4  4) /usr/local/bin/virtualenv-2.7
+1) /usr/local/bin/virtualenv-3.7  4) /usr/local/bin/virtualenv-2.7
  :: Select virtualenv program to use:
 ```
 
-#### Activate an Existing Virtualenv
+#### Create a Unique Project Virtualenv
 
-Simply run:
+You can use paths when creating a new virtualenv, _e.g._:
 
 ```bash
-$ workon foobar
+cd myproject
+workon -c .
+```
+
+This will create a unique virtualenv name with the crc32 of path,
+_i.e._ `myproject-8bfb376d`.
+
+#### Activate an Existing Virtualenv
+
+Provide the name of a virtualenv, or without arguments and `fzf`/`fzy`
+will be used to interactively select a virtual-environment.
+
+```bash
+workon foobar
 ```
 
 To deactivate, simply type `exit` or hit <kbd>Ctrl</kbd>+<kbd>d</kbd>
+
+#### Run Arbitrary Commands
+
+You can run "one-off" commands within the virtualenv's binary directory,
+for example list all pip installed packages:
+
+```bash
+workon -r myproject pip list
+```
 
 ### Shell Completion
 
