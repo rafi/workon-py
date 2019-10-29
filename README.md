@@ -5,6 +5,8 @@
 Work and create python virtualenvs in a central
 directory, use sub-shell for activation and run arbitrary commands in envs.
 
+![workon-py visual demo](http://rafi.io/static/img/project/workon-py/demo.gif)
+
 ## Install
 
 Before, make sure you're using Python 3 and/or have `virtualenv` installed.
