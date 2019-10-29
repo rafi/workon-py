@@ -11,7 +11,9 @@ directory, use sub-shell for activation and run arbitrary commands in envs.
 
 Before, make sure you're using Python 3 and/or have `virtualenv` installed.
 
-Change directory to installation location, for example `~/.local/bin`:
+On macOS, you can simply use brew: `brew install rafi/tap/workon-py`
+
+Otherwise, change directory to installation location, for example `~/.local/bin`:
 
 ```bash
 $ cd ~/.local/bin
